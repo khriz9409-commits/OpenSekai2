@@ -1,0 +1,331 @@
+using System;
+using System.IO;
+using Beebyte.Obfuscator;
+using MessagePack;
+using Newtonsoft.Json;
+using UnityEngine;
+
+namespace Sekai
+{
+	[MessagePackObject(false)]
+	[Skip]
+	public class LiveSettingData
+	{
+		public enum LiveModeType
+		{
+			High3D = 0,
+			Default3D = 1,
+			Mode2D = 2,
+			Low = 3,
+			OriginalMV = 4
+		}
+
+		public const int MusicInfoDisplayModeNormal = 0;
+
+		public const int MusicInfoDisplayModeCustomScore = 1;
+
+		public const int CustomMusicScoreBackgroundModeJacket = 0;
+
+		public const int CustomMusicScoreBackgroundMode2DMV = 1;
+
+		public const int FrameRateMode60 = 0;
+
+		public const int FrameRateMode120 = 1;
+
+		public const int FrameRateModeUnlimited = 2;
+
+		private const string StorageFileName = "LiveSettingData.json";
+
+		private static LiveSettingData cachedStorage;
+
+		[Key("NoteSpeed")]
+		public float NoteSpeed { get; set; }
+
+		/// <summary>Legacy offset in frames (1/60 s); still edited by the settings UI. Shifts visuals and judgement.</summary>
+		[Key("TimingAdjustData")]
+		public float TimingAdjustData { get; set; }
+
+		/// <summary>Music clock offset in milliseconds, added to <see cref="TimingAdjustData"/>. Shifts visuals and judgement.</summary>
+		[Key("AudioOffsetMs")]
+		public float AudioOffsetMs { get; set; }
+
+		/// <summary>Judgement-only offset in milliseconds. Positive when the player tends to hit late.</summary>
+		[Key("JudgeOffsetMs")]
+		public float JudgeOffsetMs { get; set; }
+
+		/// <summary>Total music clock offset in seconds (legacy frames + <see cref="AudioOffsetMs"/>).</summary>
+		[IgnoreMember]
+		[JsonIgnore]
+		public float AudioOffsetSeconds => TimingAdjustData / 60f + AudioOffsetMs / 1000f;
+
+		[Key("Brightness")]
+		public float Brightness { get; set; }
+
+		[Key("LaneTransparent")]
+		public float LaneTransparent { get; set; }
+
+		[Key("UseCutIn")]
+		public bool UseCutIn { get; set; }
+
+		[Key("HiddenSkillAndPraise")]
+		public bool HiddenSkillAndPraise { get; set; }
+
+		[Key("UseSimultaneousPushingLine")]
+		public bool UseSimultaneousPushingLine { get; set; }
+
+		[Key("UseVibration")]
+		public bool UseVibration { get; set; }
+
+		[Key("UseAllPerfectEffect")]
+		public bool UseAllPerfectEffect { get; set; }
+
+		[Key("LiveMode")]
+		public LiveModeType LiveMode { get; set; }
+
+		[Key("NoteAlpha")]
+		public float NoteAlpha { get; set; }
+
+		[Key("GuideAlpha")]
+		public float GuideAlpha { get; set; }
+
+		[Key("NoteSkinIndex")]
+		public int NoteSkinIndex { get; set; }
+
+		[Key("NoteSeIndex")]
+		public int NoteSeIndex { get; set; }
+
+		[Key("IsMirror")]
+		public bool IsMirror { get; set; }
+
+		[Key("QualityType")]
+		public MVQualityType QualityType { get; set; }
+
+		[Key("IsFastLateFlick")]
+		public bool IsFastLateFlick { get; set; }
+
+		/// <summary>Legacy two-way 滑らかさ(FPS); only read when <see cref="FrameRateMode"/> is missing from a save.</summary>
+		[Key("Use120FPS")]
+		public bool Use120FPS { get; set; }
+
+		/// <summary>
+		/// 滑らかさ(FPS) during a live: <see cref="FrameRateMode60"/>, <see cref="FrameRateMode120"/> or
+		/// <see cref="FrameRateModeUnlimited"/>. Null in saves made before it existed.
+		/// </summary>
+		[Key("FrameRateMode")]
+		public int? FrameRateMode { get; set; }
+
+		[IgnoreMember]
+		[JsonIgnore]
+		public int LiveFrameRateMode
+		{
+			get
+			{
+				return FrameRateMode ?? (Use120FPS ? FrameRateMode120 : FrameRateMode60);
+			}
+		}
+
+		[Key("UsedVSync")]
+		public bool? UseVSync { get; set; }
+
+		[Key("NoteEffect")]
+		public int NoteEffect { get; set; }
+
+		[Key("_noteShowRate")]
+		public float _noteShowRate { get; set; }
+
+		[IgnoreMember]
+		[JsonIgnore]
+		public float NoteShowRate
+		{
+			get
+			{
+				return 1f - _noteShowRate;
+			}
+			set
+			{
+				_noteShowRate = 1f - value;
+			}
+		}
+
+		[Key("FeverEffectTypeIndex")]
+		public int FeverEffectTypeIndex { get; set; }
+
+		[Key("TotalPowerUpperLimit")]
+		public int? TotalPowerUpperLimit { get; set; }
+
+		[Key("TotalPowerLowerLimit")]
+		public int? TotalPowerLowerLimit { get; set; }
+
+		[Key("CustomRoomTotalPowerUpperLimit")]
+		public int? CustomRoomTotalPowerUpperLimit { get; set; }
+
+		[Key("CustomRoomTotalPowerLowerLimit")]
+		public int? CustomRoomTotalPowerLowerLimit { get; set; }
+
+		[Key("ShowsRoomId")]
+		public bool ShowsRoomId { get; set; }
+
+		[Key("CustomRoomScoreSettingIndex")]
+		public int CustomRoomScoreSettingIndex { get; set; }
+
+		[Key("CustomRoomIsDisplayPlayerInfo")]
+		public bool CustomRoomIsDisplayPlayerInfo { get; set; }
+
+		[Key("CustomRoomSelectedDifficulties")]
+		public int[] CustomRoomSelectedDifficulties { get; set; }
+
+		[Key("CustomRoomSelectedMusicType")]
+		public int CustomRoomSelectedMusicType { get; set; }
+
+		[Key("ScoreSelectType")]
+		public int ScoreSelectType { get; set; }
+
+		[Key("CustomMusicScoreMusicInfoDisplayMode")]
+		public int? CustomMusicScoreMusicInfoDisplayMode { get; set; }
+
+		[Key("CustomMusicScoreLiveBackgroundMode")]
+		public int? CustomMusicScoreLiveBackgroundMode { get; set; }
+
+		[IgnoreMember]
+		[JsonIgnore]
+		public bool UsesCustomMusicScoreMusicInfoDisplay
+		{
+			get
+			{
+				return (CustomMusicScoreMusicInfoDisplayMode ?? MusicInfoDisplayModeCustomScore) == MusicInfoDisplayModeCustomScore;
+			}
+		}
+
+		[IgnoreMember]
+		[JsonIgnore]
+		public bool UsesCustomMusicScore2DMVBackground
+		{
+			get
+			{
+				return (CustomMusicScoreLiveBackgroundMode ?? CustomMusicScoreBackgroundMode2DMV) == CustomMusicScoreBackgroundMode2DMV;
+			}
+		}
+
+		public LiveSettingData()
+		{
+			ShowsRoomId = true;
+			NoteAlpha = 1f;
+			GuideAlpha = 0.6f;
+			CustomRoomIsDisplayPlayerInfo = true;
+			UseCutIn = true;
+			LiveMode = LiveModeType.Default3D;
+			UseAllPerfectEffect = true;
+			QualityType = MVQualityType.Default;
+			Use120FPS = false;
+			NoteEffect = 0;
+			_noteShowRate = 0f;
+			FeverEffectTypeIndex = 0;
+			UseSimultaneousPushingLine = true;
+			UseVibration = true;
+			NoteSpeed = 6f;
+			TimingAdjustData = 0f;
+			AudioOffsetMs = 0f;
+			JudgeOffsetMs = 0f;
+			Brightness = 1f;
+			LaneTransparent = 1f;
+			CustomMusicScoreMusicInfoDisplayMode = MusicInfoDisplayModeCustomScore;
+			CustomMusicScoreLiveBackgroundMode = CustomMusicScoreBackgroundMode2DMV;
+		}
+
+		public static LiveSettingData LoadFromStorage()
+		{
+			if (cachedStorage != null)
+			{
+				return cachedStorage;
+			}
+
+			LiveSettingData data = null;
+			string path = StoragePath;
+			if (File.Exists(path))
+			{
+				try
+				{
+					data = JsonConvert.DeserializeObject<LiveSettingData>(File.ReadAllText(path));
+				}
+				catch (Exception exception)
+				{
+					Debug.LogWarningFormat("LiveSettingData could not be loaded. path:{0} error:{1}", path, exception.Message);
+				}
+			}
+
+			cachedStorage = data ?? new LiveSettingData();
+			return cachedStorage;
+		}
+
+		[Skip]
+		public static void SaveToStorage(LiveSettingData data)
+		{
+			cachedStorage = data ?? new LiveSettingData();
+			string path = StoragePath;
+			try
+			{
+				Directory.CreateDirectory(Path.GetDirectoryName(path));
+				File.WriteAllText(path, JsonConvert.SerializeObject(cachedStorage, Formatting.Indented));
+			}
+			catch (Exception exception)
+			{
+				Debug.LogWarningFormat("LiveSettingData could not be saved. path:{0} error:{1}", path, exception.Message);
+			}
+			SUS.Converter.InvalidateLiveSettingCache();
+		}
+
+		private static string StoragePath => Path.Combine(OpenSekai.Platform.GamePaths.Root, StorageFileName);
+
+		public static string GetLiveModeTextKey(LiveModeType mode)
+		{
+			switch (mode)
+			{
+				case LiveModeType.High3D:
+				case LiveModeType.Default3D:
+					return "WORD_3DMV";
+				case LiveModeType.Mode2D:
+					return "WORD_2DMV";
+				case LiveModeType.Low:
+					return "WORD_2D";
+				case LiveModeType.OriginalMV:
+					return "WORD_ORIGINAL_MV";
+				default:
+					return "WORD_3DMV";
+			}
+		}
+
+		public float GetNoteAlpha()
+		{
+			return NoteAlpha == 0f ? 1f : NoteAlpha;
+		}
+
+		public float GetGuideAlpha()
+		{
+			return GuideAlpha == 0f ? 0.6f : GuideAlpha;
+		}
+
+		/// <summary>The live's target frame rate for <see cref="LiveFrameRateMode"/>; 0 means unlimited.</summary>
+		public int GetLiveTargetFrameRate()
+		{
+			switch (LiveFrameRateMode)
+			{
+				case FrameRateMode120:
+					return 120;
+				case FrameRateModeUnlimited:
+					return 0;
+				default:
+					return 60;
+			}
+		}
+
+		public void SetNoteShowRate(float optionValue)
+		{
+			_noteShowRate = optionValue / 100f;
+		}
+
+		public static float CalculateNoteShowRate(float optionValue)
+		{
+			return 1f - optionValue / 100f;
+		}
+	}
+}

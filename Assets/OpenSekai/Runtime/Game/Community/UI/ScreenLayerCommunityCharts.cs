@@ -1,0 +1,1173 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using Sekai.CustomMusicScoreManager;
+using Sekai.MusicScoreMaker.Common;
+using TMPro;
+using UnityEngine;
+using UnityEngine.Networking;
+using UnityEngine.Serialization;
+using UnityEngine.UI;
+
+namespace Sekai.Community
+{
+	/// <summary>
+	/// The online chart browser (CommunityCharts scene), shaped after the original CREATE CHART screen:
+	/// おすすめ / ランキング (デイリー・総合) / 新着 / 検索 tabs and マイリスト, a chart list on the left and the
+	/// chart window on the right with 親譜面 / 登録 / ダウンロード・プレイ. Charts come from the SekaiFanmade site.
+	/// Authored in <c>Prefabs/Community/ScreenLayerCommunityCharts</c>; this only binds it.
+	/// </summary>
+	public sealed class ScreenLayerCommunityCharts : ScreenLayer
+	{
+		private enum Tab
+		{
+			Recommended,
+			Ranking,
+			New,
+			Search,
+			MyList,
+		}
+
+		private static readonly string[] FilterDifficultyTypes = { null, "easy", "normal", "hard", "expert", "master", "append" };
+
+		/// <summary>優先表示カテゴリ: 人気 / 高難易度 / 新着 / ランダム.</summary>
+		private const string UpvoteColor = "#FF7DA8";
+		private const string DownvoteColor = "#7D9BFF";
+		// 人気 is Reddit's hot ranking, the same as おすすめ.
+		private static readonly string[] SearchSorts = { CommunitySort.Hot, CommunitySort.Hard, CommunitySort.New, CommunitySort.Random };
+
+		private static readonly Color32 Teal = new Color32(103, 221, 205, 255);
+		private static readonly Color32 IdleFill = new Color32(64, 58, 104, 170);
+		private static readonly Color32 TabIdle = new Color32(170, 166, 210, 255);
+
+		private const float PreviewSeconds = 20f;
+
+		private const string Table = "Community";
+
+		[Header("Header")]
+		[SerializeField]
+		private Button backButton;
+		[SerializeField]
+		private Button[] tabButtons = Array.Empty<Button>();
+		[SerializeField]
+		private TextMeshProUGUI[] tabLabels = Array.Empty<TextMeshProUGUI>();
+		[SerializeField]
+		private GameObject[] tabUnderlines = Array.Empty<GameObject>();
+		[SerializeField]
+		private Button myListButton;
+		[SerializeField]
+		private Image myListFace;
+		/// <summary>☰, as in the local chart manager: opens the option dialog, where Additionals holds the sign-in.</summary>
+		[SerializeField]
+		private Button settingsButton;
+
+		[Header("Filters")]
+		[SerializeField]
+		private GameObject difficultyRail;
+		[SerializeField]
+		private Button[] difficultyButtons = Array.Empty<Button>();
+		[SerializeField]
+		private Image[] difficultyFills = Array.Empty<Image>();
+		[SerializeField]
+		private GameObject periodToggle;
+		[SerializeField]
+		private Button dailyButton;
+		[SerializeField]
+		private Image dailyFill;
+		[SerializeField]
+		private Button totalButton;
+		[SerializeField]
+		private Image totalFill;
+		[SerializeField]
+		private Button searchBackButton;
+
+		[Header("List")]
+		[SerializeField]
+		private GameObject listArea;
+		[SerializeField]
+		private ScrollRect listScroll;
+		[SerializeField]
+		private RectTransform listContent;
+		[SerializeField]
+		private CustomMusicScoreEntryCell cellTemplate;
+		[SerializeField]
+		private TextMeshProUGUI emptyText;
+		[SerializeField]
+		private TextMeshProUGUI listCountLabel;
+		[SerializeField]
+		private TextMeshProUGUI listCountText;
+		[SerializeField]
+		private TextMeshProUGUI statusText;
+
+		[Header("Chart window")]
+		[SerializeField]
+		private GameObject detailWindow;
+		[SerializeField]
+		private TextMeshProUGUI windowTitleText;
+		[SerializeField]
+		private GameObject detailEmptyState;
+		[SerializeField]
+		private TextMeshProUGUI detailEmptyHint;
+		[SerializeField]
+		private GameObject detailContent;
+		[SerializeField]
+		private Image jacketImage;
+		[SerializeField]
+		private CustomMusicScoreDifficultyBadge detailBadge;
+		[SerializeField]
+		private TextMeshProUGUI detailTitle;
+		[SerializeField]
+		private TextMeshProUGUI detailStatus;
+		[SerializeField]
+		private TextMeshProUGUI detailMeta;
+		[SerializeField]
+		private TextMeshProUGUI infoLabel;
+		[SerializeField]
+		private TextMeshProUGUI infoLeft;
+		[SerializeField]
+		private TextMeshProUGUI infoRight;
+		[SerializeField]
+		private TextMeshProUGUI detailDescription;
+		[SerializeField]
+		[FormerlySerializedAs("likeButton")]
+		private Button upvoteButton;
+		[SerializeField]
+		[FormerlySerializedAs("likeLabel")]
+		private TextMeshProUGUI upvoteLabel;
+		[SerializeField]
+		private Button downvoteButton;
+		[SerializeField]
+		private TextMeshProUGUI downvoteLabel;
+		[SerializeField]
+		private Button previewButton;
+		[SerializeField]
+		private TextMeshProUGUI previewLabel;
+		[SerializeField]
+		private Button webPageButton;
+
+		[Header("Actions")]
+		[SerializeField]
+		private GameObject actionButtons;
+		[SerializeField]
+		private Button parentButton;
+		[SerializeField]
+		private Button bookmarkButton;
+		[SerializeField]
+		private TextMeshProUGUI bookmarkLabel;
+		[SerializeField]
+		private Button playButton;
+		[SerializeField]
+		private TextMeshProUGUI playLabel;
+		[SerializeField]
+		private GameObject playIcon;
+
+		[Header("Search")]
+		[SerializeField]
+		private GameObject searchForm;
+		[SerializeField]
+		private TMP_InputField searchTextInput;
+		[SerializeField]
+		private TMP_InputField searchTagInput;
+		[SerializeField]
+		private TextMeshProUGUI searchTagHint;
+		[SerializeField]
+		private Button[] searchDifficultyButtons = Array.Empty<Button>();
+		[SerializeField]
+		private Image[] searchDifficultyFills = Array.Empty<Image>();
+		[SerializeField]
+		private Button[] searchSortButtons = Array.Empty<Button>();
+		[SerializeField]
+		private Image[] searchSortFills = Array.Empty<Image>();
+		[SerializeField]
+		private Button searchButton;
+		[SerializeField]
+		private Button idSearchButton;
+		[SerializeField]
+		private GameObject idSearchPopup;
+		[SerializeField]
+		private TMP_InputField idSearchInput;
+		[SerializeField]
+		private Button idSearchConfirmButton;
+		[SerializeField]
+		private Button idSearchCancelButton;
+
+		[Header("Account")]
+		[SerializeField]
+		private CommunityLoginPanel loginPanel;
+
+		[SerializeField]
+		private AudioSource previewSource;
+
+		private readonly List<Row> _rows = new List<Row>();
+		private Tab _tab = Tab.Recommended;
+		private int _difficultyIndex;
+		private bool _rankingDaily = true;
+		private int _searchDifficultyIndex;
+		private int _searchSortIndex;
+		private bool _searchSubmitted;
+		private CommunityQuery _searchQuery;
+		private CommunityChart _idResult;
+		private int _page;
+		private int _pages = 1;
+		private int _total;
+		private bool _loading;
+		private int _loadVersion;
+		private CommunityChart _selected;
+		private bool _downloading;
+		private bool _voting;
+		private bool _started;
+		private CancellationTokenSource _previewCts;
+		private AudioClip _previewClip;
+		private string _previewUrl;
+
+		private CancellationToken DestroyToken => this.GetCancellationTokenOnDestroy();
+
+		protected override void Awake()
+		{
+			base.Awake();
+			backButton.onClick.AddListener(() => SceneManager.Instance.RequestScene(SceneManager.Scene.Home));
+			for (int i = 0; i < tabButtons.Length; i++)
+			{
+				Tab tab = (Tab)i;
+				tabButtons[i].onClick.AddListener(() => SelectTab(tab));
+			}
+			myListButton.onClick.AddListener(() => SelectTab(Tab.MyList));
+			settingsButton.onClick.AddListener(() => ScreenManager.Instance?.ShowDialog<OptionDialog>(DialogType.OptionDialog));
+			for (int i = 0; i < difficultyButtons.Length; i++)
+			{
+				int index = i;
+				difficultyButtons[i].onClick.AddListener(() => SetDifficultyFilter(index));
+			}
+			dailyButton.onClick.AddListener(() => SetRankingPeriod(true));
+			totalButton.onClick.AddListener(() => SetRankingPeriod(false));
+			searchBackButton.onClick.AddListener(ShowSearchForm);
+			listScroll.onValueChanged.AddListener(_ => MaybeLoadMore());
+
+			upvoteButton.onClick.AddListener(() => VoteAsync(1).Forget());
+			downvoteButton.onClick.AddListener(() => VoteAsync(-1).Forget());
+			previewButton.onClick.AddListener(TogglePreview);
+			webPageButton.onClick.AddListener(() =>
+			{
+				if (_selected != null)
+				{
+					Application.OpenURL(CommunityClient.ChartPageUrl(_selected.Id));
+				}
+			});
+			parentButton.onClick.AddListener(() => OpenParentAsync().Forget());
+			bookmarkButton.onClick.AddListener(() => ToggleBookmarkAsync().Forget());
+			playButton.onClick.AddListener(() => DownloadOrPlayAsync().Forget());
+
+			for (int i = 0; i < searchDifficultyButtons.Length; i++)
+			{
+				int index = i;
+				searchDifficultyButtons[i].onClick.AddListener(() =>
+				{
+					_searchDifficultyIndex = index;
+					UpdateSearchFormVisuals();
+				});
+			}
+			for (int i = 0; i < searchSortButtons.Length; i++)
+			{
+				int index = i;
+				searchSortButtons[i].onClick.AddListener(() =>
+				{
+					_searchSortIndex = index;
+					UpdateSearchFormVisuals();
+				});
+			}
+			searchButton.onClick.AddListener(SubmitSearch);
+			searchTextInput.onSubmit.AddListener(_ => SubmitSearch());
+			searchTagInput.onSubmit.AddListener(_ => SubmitSearch());
+			idSearchButton.onClick.AddListener(() =>
+			{
+				Sekai.UI.UIClickSound.PlayOpen();
+				idSearchPopup.SetActive(true);
+				idSearchInput.text = string.Empty;
+				idSearchInput.ActivateInputField();
+			});
+			idSearchCancelButton.onClick.AddListener(() => idSearchPopup.SetActive(false));
+			idSearchConfirmButton.onClick.AddListener(() => SearchByIdAsync().Forget());
+			idSearchInput.onSubmit.AddListener(_ => SearchByIdAsync().Forget());
+			idSearchInput.contentType = TMP_InputField.ContentType.IntegerNumber;
+
+			cellTemplate.gameObject.SetActive(false);
+			loginPanel.gameObject.SetActive(false);
+			idSearchPopup.SetActive(false);
+			CommunityAccount.Changed += OnAccountChanged;
+			UpdateSearchFormVisuals();
+			ApplyTabLayout();
+			UpdateSelection(null);
+			statusText.text = string.Empty;
+		}
+
+		private void OnDestroy()
+		{
+			CommunityAccount.Changed -= OnAccountChanged;
+			StopPreview();
+		}
+
+		protected override void OnScreenStart()
+		{
+			if (!_started)
+			{
+				_started = true;
+				Reload();
+				LoadTagHintAsync().Forget();
+			}
+		}
+
+		protected override void OnExited()
+		{
+			StopPreview();
+			base.OnExited();
+		}
+
+		/* ---------- tabs and filters ---------- */
+
+		private void SelectTab(Tab tab)
+		{
+			if (tab == Tab.MyList && !CommunityAccount.IsSignedIn)
+			{
+				loginPanel.Show(L10n.Get(Table, "signIn.forMyList"), () => SelectTab(Tab.MyList));
+				return;
+			}
+			if (tab == _tab && tab != Tab.Search)
+			{
+				return;
+			}
+			_tab = tab;
+			if (tab == Tab.Search)
+			{
+				_searchSubmitted = false;
+			}
+			ApplyTabLayout();
+			if (tab != Tab.Search)
+			{
+				Reload();
+			}
+		}
+
+		private void ApplyTabLayout()
+		{
+			for (int i = 0; i < tabButtons.Length; i++)
+			{
+				bool active = (int)_tab == i;
+				if (i < tabLabels.Length && tabLabels[i] != null)
+				{
+					tabLabels[i].color = active ? Color.white : TabIdle;
+				}
+				if (i < tabUnderlines.Length && tabUnderlines[i] != null)
+				{
+					tabUnderlines[i].SetActive(active);
+				}
+			}
+			if (myListFace != null)
+			{
+				myListFace.color = _tab == Tab.MyList ? (Color)Teal : Color.white;
+			}
+
+			bool form = _tab == Tab.Search && !_searchSubmitted;
+			searchForm.SetActive(form);
+			listArea.SetActive(!form);
+			detailWindow.SetActive(!form);
+			actionButtons.SetActive(!form);
+			statusText.gameObject.SetActive(!form);
+			difficultyRail.SetActive(!form && (_tab == Tab.Ranking || _tab == Tab.New || _tab == Tab.MyList));
+			periodToggle.SetActive(_tab == Tab.Ranking);
+			searchBackButton.gameObject.SetActive(_tab == Tab.Search && _searchSubmitted);
+			if (listCountLabel != null)
+			{
+				listCountLabel.text = _tab switch
+				{
+					Tab.Recommended => L10n.Get(Table, "tab.recommended"),
+					Tab.Ranking => _rankingDaily ? L10n.Get(Table, "ranking.daily") : L10n.Get(Table, "ranking.total"),
+					Tab.New => L10n.Get(Table, "tab.new"),
+					Tab.Search => L10n.Get(Table, "list.searchResults"),
+					_ => L10n.Get(Table, "tab.myList"),
+				};
+			}
+			UpdateDifficultyVisuals();
+			UpdatePeriodVisuals();
+			if (form)
+			{
+				StopPreview();
+			}
+		}
+
+		private void SetDifficultyFilter(int index)
+		{
+			_difficultyIndex = Mathf.Clamp(index, 0, FilterDifficultyTypes.Length - 1);
+			UpdateDifficultyVisuals();
+			Reload();
+		}
+
+		private void SetRankingPeriod(bool daily)
+		{
+			if (_rankingDaily == daily)
+			{
+				return;
+			}
+			_rankingDaily = daily;
+			ApplyTabLayout();
+			Reload();
+		}
+
+		private void UpdateDifficultyVisuals()
+		{
+			PaintRadio(difficultyFills, _difficultyIndex, i => i == 0 ? Teal : CustomMusicScoreDifficultyBadge.GetDifficultyColor(FilterDifficultyTypes[i]));
+		}
+
+		private void UpdatePeriodVisuals()
+		{
+			if (dailyFill != null)
+			{
+				dailyFill.color = _rankingDaily ? Teal : IdleFill;
+			}
+			if (totalFill != null)
+			{
+				totalFill.color = _rankingDaily ? IdleFill : Teal;
+			}
+		}
+
+		private void UpdateSearchFormVisuals()
+		{
+			PaintRadio(searchDifficultyFills, _searchDifficultyIndex, i => i == 0 ? Teal : CustomMusicScoreDifficultyBadge.GetDifficultyColor(FilterDifficultyTypes[i]));
+			PaintRadio(searchSortFills, _searchSortIndex, _ => Teal);
+		}
+
+		private static void PaintRadio(Image[] fills, int selected, Func<int, Color32> colorOf)
+		{
+			for (int i = 0; i < fills.Length; i++)
+			{
+				if (fills[i] != null)
+				{
+					fills[i].color = i == selected ? colorOf(i) : IdleFill;
+				}
+			}
+		}
+
+		/* ---------- search ---------- */
+
+		private void ShowSearchForm()
+		{
+			_searchSubmitted = false;
+			ApplyTabLayout();
+		}
+
+		private void SubmitSearch()
+		{
+			_searchQuery = new CommunityQuery
+			{
+				Text = searchTextInput.text,
+				Tag = searchTagInput.text,
+				Difficulty = FilterDifficultyTypes[Mathf.Clamp(_searchDifficultyIndex, 0, FilterDifficultyTypes.Length - 1)],
+				Sort = SearchSorts[Mathf.Clamp(_searchSortIndex, 0, SearchSorts.Length - 1)],
+				Seed = UnityEngine.Random.Range(0, int.MaxValue).ToString(CultureInfo.InvariantCulture),
+			};
+			_idResult = null;
+			_searchSubmitted = true;
+			ApplyTabLayout();
+			Reload();
+		}
+
+		private async UniTaskVoid SearchByIdAsync()
+		{
+			string text = idSearchInput.text.Trim().TrimStart('#');
+			bool isNumber = long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out long number) && number > 0;
+			bool isId = text.Length == 32 && System.Text.RegularExpressions.Regex.IsMatch(text, "^[0-9a-fA-F]{32}$");
+			if (!isNumber && !isId)
+			{
+				SetStatus(L10n.Get(Table, "search.enterNumber"));
+				return;
+			}
+			string id = isNumber ? number.ToString(CultureInfo.InvariantCulture) : text.ToLowerInvariant();
+			idSearchPopup.SetActive(false);
+			try
+			{
+				CommunityChart chart = await CommunityClient.GetAsync(id, DestroyToken);
+				if (chart == null)
+				{
+					_searchSubmitted = false;
+					ApplyTabLayout();
+					SetStatus(L10n.Format(Table, "search.notFound", id));
+					return;
+				}
+				_idResult = chart;
+				_searchQuery = null;
+				_searchSubmitted = true;
+				ApplyTabLayout();
+				Reload();
+			}
+			catch (CommunityException exception)
+			{
+				SetStatus(exception.Message);
+			}
+		}
+
+		private async UniTaskVoid LoadTagHintAsync()
+		{
+			if (searchTagHint == null)
+			{
+				return;
+			}
+			try
+			{
+				List<CommunityTagCount> tags = await CommunityClient.ListTagsAsync(DestroyToken);
+				searchTagHint.text = tags.Count == 0
+					? string.Empty
+					: L10n.Format(Table, "search.commonTags", string.Join(L10n.Get(Table, "search.tagSeparator"), tags.GetRange(0, Math.Min(8, tags.Count)).ConvertAll(t => t.Tag)));
+			}
+			catch (Exception exception) when (exception is CommunityException || exception is OperationCanceledException)
+			{
+				searchTagHint.text = string.Empty;
+			}
+		}
+
+		/* ---------- list ---------- */
+
+		private void Reload()
+		{
+			_loadVersion++;
+			_page = 0;
+			_pages = 1;
+			_total = 0;
+			_loading = false;
+			ClearRows();
+			UpdateSelection(null);
+			emptyText.gameObject.SetActive(false);
+			listScroll.verticalNormalizedPosition = 1f;
+			LoadNextPageAsync().Forget();
+		}
+
+		private void MaybeLoadMore()
+		{
+			if (!_loading && _page < _pages && listScroll.verticalNormalizedPosition < 0.08f)
+			{
+				LoadNextPageAsync().Forget();
+			}
+		}
+
+		private CommunityQuery BuildQuery(int page)
+		{
+			string difficulty = FilterDifficultyTypes[Mathf.Clamp(_difficultyIndex, 0, FilterDifficultyTypes.Length - 1)];
+			switch (_tab)
+			{
+				case Tab.Recommended:
+					return new CommunityQuery { Sort = CommunitySort.Hot, Page = page };
+				case Tab.Ranking:
+					return new CommunityQuery { Sort = _rankingDaily ? CommunitySort.Daily : CommunitySort.Top, Difficulty = difficulty, Page = page };
+				case Tab.New:
+					return new CommunityQuery { Sort = CommunitySort.New, Difficulty = difficulty, Page = page };
+				case Tab.MyList:
+					return new CommunityQuery { Sort = CommunitySort.New, Difficulty = difficulty, Page = page };
+				default:
+					CommunityQuery query = (_searchQuery ?? new CommunityQuery()).Clone();
+					query.Page = page;
+					return query;
+			}
+		}
+
+		private async UniTaskVoid LoadNextPageAsync()
+		{
+			if (_loading || _page >= _pages)
+			{
+				return;
+			}
+			int version = _loadVersion;
+			int page = _page + 1;
+			_loading = true;
+			if (page == 1)
+			{
+				SetStatus(L10n.Get("Common", "loading"));
+			}
+			try
+			{
+				CommunityChartPage result;
+				if (_tab == Tab.Search && _idResult != null)
+				{
+					result = new CommunityChartPage { Items = new List<CommunityChart> { _idResult }, Total = 1, Page = 1, Pages = 1 };
+				}
+				else if (_tab == Tab.MyList)
+				{
+					result = await CommunityClient.ListBookmarksAsync(BuildQuery(page), DestroyToken);
+				}
+				else
+				{
+					result = await CommunityClient.ListAsync(BuildQuery(page), DestroyToken);
+				}
+				if (version != _loadVersion)
+				{
+					return;
+				}
+				_page = result.Page;
+				_pages = Math.Max(1, result.Pages);
+				_total = result.Total;
+				foreach (CommunityChart chart in result.Items)
+				{
+					_rows.Add(CreateRow(chart, _tab == Tab.Ranking ? _rows.Count + 1 : 0));
+				}
+				listCountText.text = _total.ToString(CultureInfo.InvariantCulture);
+				emptyText.gameObject.SetActive(_rows.Count == 0);
+				emptyText.text = _tab switch
+				{
+					Tab.MyList => L10n.Get(Table, "list.emptyMyList"),
+					Tab.Search => L10n.Get(Table, "list.emptySearch"),
+					_ => L10n.Get(Table, "list.empty"),
+				};
+				SetStatus(string.Empty);
+				if (_selected == null && _rows.Count > 0)
+				{
+					UpdateSelection(_rows[0].Chart);
+				}
+			}
+			catch (OperationCanceledException)
+			{
+			}
+			catch (CommunityException exception)
+			{
+				if (version != _loadVersion)
+				{
+					return;
+				}
+				if (exception.Code == "AUTH_REQUIRED" && _tab == Tab.MyList)
+				{
+					SelectTab(Tab.Recommended);
+					loginPanel.Show(L10n.Get(Table, "error.signInExpired"), () => SelectTab(Tab.MyList));
+				}
+				emptyText.gameObject.SetActive(_rows.Count == 0);
+				emptyText.text = L10n.Get(Table, "list.loadFailed");
+				SetStatus(exception.Message);
+			}
+			finally
+			{
+				if (version == _loadVersion)
+				{
+					_loading = false;
+				}
+			}
+		}
+
+		private Row CreateRow(CommunityChart chart, int rank)
+		{
+			CustomMusicScoreEntryCell cell = Instantiate(cellTemplate, listContent, false);
+			cell.name = "ChartCell_" + chart.Id;
+			cell.gameObject.SetActive(true);
+			Row row = new Row(cell, chart, rank);
+			cell.Button.onClick.AddListener(() => UpdateSelection(chart));
+			FillRow(row);
+			if (cell.JacketImage != null)
+			{
+				cell.JacketImage.color = Color.clear;
+				LoadRowJacketAsync(row).Forget();
+			}
+			return row;
+		}
+
+		private void FillRow(Row row)
+		{
+			CommunityChart chart = row.Chart;
+			CustomMusicScoreEntryCell cell = row.Cell;
+			string title = string.IsNullOrWhiteSpace(chart.ScoreTitle) ? chart.Title : chart.ScoreTitle;
+			cell.TitleText.text = row.Rank > 0
+				? "<color=" + RankColor(row.Rank) + "><b>" + row.Rank + "</b></color>  " + title
+				: title;
+			string meta = chart.ScoreTitle != chart.Title && !string.IsNullOrWhiteSpace(chart.Title) ? chart.Title : chart.ArtistLine;
+			cell.MetaText.text = string.IsNullOrWhiteSpace(meta) ? chart.Uploader.Nickname : meta + "  /  " + chart.Uploader.Nickname;
+			cell.StatusText.text = StatsLine(chart) + BadgesLine(chart);
+			cell.StatusText.color = Color.white;
+			cell.DifficultyBadge?.Set(chart.Difficulty, chart.PlayLevel);
+		}
+
+		private static string RankColor(int rank) => rank switch
+		{
+			1 => "#FFD54A",
+			2 => "#D7DCE8",
+			3 => "#F0A867",
+			_ => "#9C98C8",
+		};
+
+		private static string StatsLine(CommunityChart chart)
+		{
+			return "<color=#9C98C8>▶</color> " + chart.PlayCount + "   <color=#FF7DA8>▲</color> " + chart.Score;
+		}
+
+		private static string BadgesLine(CommunityChart chart)
+		{
+			string badges = string.Empty;
+			if (!string.IsNullOrEmpty(chart.ParentChartId))
+			{
+				badges += "   <color=#67DDCD>" + L10n.Get(Table, "badge.hasParent") + "</color>";
+			}
+			if (chart.AllowDerivative)
+			{
+				badges += "   <color=#FF8FB8>" + L10n.Get(Table, "badge.derivativeAllowed") + "</color>";
+			}
+			switch (CommunityLibrary.GetState(chart))
+			{
+				case CommunityInstallState.Installed:
+					badges += "   <color=#A9E879>" + L10n.Get(Table, "badge.downloaded") + "</color>";
+					break;
+				case CommunityInstallState.Outdated:
+					badges += "   <color=#FFC04D>" + L10n.Get(Table, "badge.updateAvailable") + "</color>";
+					break;
+			}
+			return badges;
+		}
+
+		private async UniTaskVoid LoadRowJacketAsync(Row row)
+		{
+			(bool cancelled, Sprite sprite) = await CommunityImageCache.LoadAsync(row.Chart.JacketUrl, DestroyToken).SuppressCancellationThrow();
+			if (!cancelled && row.Cell != null && row.Cell.JacketImage != null)
+			{
+				row.Cell.JacketImage.sprite = sprite;
+				row.Cell.JacketImage.color = sprite != null ? Color.white : Color.clear;
+			}
+		}
+
+		private void ClearRows()
+		{
+			foreach (Row row in _rows)
+			{
+				if (row.Cell != null)
+				{
+					Destroy(row.Cell.gameObject);
+				}
+			}
+			_rows.Clear();
+		}
+
+		/* ---------- selection and chart window ---------- */
+
+		private void UpdateSelection(CommunityChart chart)
+		{
+			if (_selected != chart)
+			{
+				StopPreview();
+			}
+			_selected = chart;
+			for (int i = 0; i < _rows.Count; i++)
+			{
+				bool selected = _rows[i].Chart == chart;
+				bool nextSelected = i + 1 < _rows.Count && _rows[i + 1].Chart == chart;
+				CustomMusicScoreEntryCell cell = _rows[i].Cell;
+				cell.Background.color = selected ? new Color32(255, 255, 255, 96) : new Color32(255, 255, 255, 0);
+				cell.SelectedFrame?.SetActive(selected);
+				cell.Separator?.SetActive(!selected && !nextSelected && i < _rows.Count - 1);
+			}
+
+			bool has = chart != null;
+			detailEmptyState.SetActive(!has);
+			detailContent.SetActive(has);
+			if (!has)
+			{
+				windowTitleText.text = "NOT FOUND";
+				if (detailEmptyHint != null)
+				{
+					detailEmptyHint.text = _loading ? L10n.Get("Common", "loading") : L10n.Get(Table, "detail.emptyHint");
+				}
+				jacketImage.sprite = null;
+				jacketImage.color = Color.clear;
+				UpdateActionButtons();
+				return;
+			}
+
+			windowTitleText.text = string.IsNullOrWhiteSpace(chart.ArtistLine) ? chart.Title : chart.Title + " - " + chart.ArtistLine;
+			detailTitle.text = string.IsNullOrWhiteSpace(chart.ScoreTitle) ? chart.Title : chart.ScoreTitle;
+			detailStatus.text = "<color=#9C98C8>" + L10n.Get(Table, "detail.charter") + "</color>  " + chart.Uploader.Nickname + BadgesLine(chart);
+			detailBadge?.Set(chart.Difficulty, chart.PlayLevel);
+			List<string> credits = new List<string>();
+			void Credit(string label, string value)
+			{
+				if (!string.IsNullOrWhiteSpace(value))
+				{
+					credits.Add("<color=#9C98C8>" + label + "</color>  " + value);
+				}
+			}
+			Credit(L10n.Get(Table, "detail.creditTitle"), chart.ScoreTitle != chart.Title ? chart.Title : null);
+			Credit(L10n.Get(Table, "detail.creditSinger"), chart.Singer);
+			Credit(L10n.Get(Table, "detail.creditComposer"), chart.Composer);
+			Credit(L10n.Get(Table, "detail.creditLyricist"), chart.Lyricist);
+			Credit(L10n.Get(Table, "detail.creditArranger"), chart.Arranger);
+			Credit(L10n.Get(Table, "detail.creditTags"), chart.Tags.Count > 0 ? string.Join(" · ", chart.Tags) : null);
+			detailMeta.text = string.Join("\n", credits);
+			infoLabel.text = L10n.Get(Table, "detail.info");
+			infoLeft.text = "<color=#9C98C8>" + L10n.Get(Table, "detail.plays") + "</color>  " + chart.PlayCount
+				+ "\n<color=#9C98C8>" + L10n.Get(Table, "detail.votes") + "</color>  " + chart.Score + "  <color=#9C98C8>(▲" + chart.Upvotes + " ▼" + chart.Downvotes + ")</color>";
+			// Two lines each: a third one runs past the info box.
+			infoRight.text = "<color=#9C98C8>" + L10n.Get(Table, "detail.updated") + "</color>  " + chart.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+				+ "\n<color=#9C98C8>" + L10n.Get(Table, "detail.size") + "</color>  " + (chart.PackageSize / 1024f / 1024f).ToString("0.0", CultureInfo.InvariantCulture) + " MB"
+				+ (chart.HasVideo ? "  · MV" : string.Empty);
+			detailDescription.text = string.IsNullOrWhiteSpace(chart.Description) ? "<color=#8F8BB8>" + L10n.Get(Table, "detail.noDescription") + "</color>" : chart.Description;
+			jacketImage.color = Color.clear;
+			LoadDetailJacketAsync(chart).Forget();
+			UpdateActionButtons();
+		}
+
+		private async UniTaskVoid LoadDetailJacketAsync(CommunityChart chart)
+		{
+			(bool cancelled, Sprite sprite) = await CommunityImageCache.LoadAsync(chart.JacketUrl, DestroyToken).SuppressCancellationThrow();
+			if (!cancelled && _selected == chart)
+			{
+				jacketImage.sprite = sprite;
+				jacketImage.color = sprite != null ? Color.white : Color.clear;
+			}
+		}
+
+		private void UpdateActionButtons()
+		{
+			CommunityChart chart = _selected;
+			bool has = chart != null;
+			parentButton.interactable = has && !string.IsNullOrEmpty(chart.ParentChartId) && !_downloading;
+			bookmarkButton.interactable = has && !_downloading;
+			bookmarkLabel.text = has && chart.Bookmarked == true ? L10n.Get(Table, "action.bookmarked") : L10n.Get(Table, "action.bookmark");
+			playButton.interactable = has && !_downloading;
+			if (!_downloading)
+			{
+				playLabel.text = !has
+					? L10n.Get(Table, "action.play")
+					: CommunityLibrary.GetState(chart) switch
+					{
+						CommunityInstallState.Installed => L10n.Get(Table, "action.play"),
+						CommunityInstallState.Outdated => L10n.Get(Table, "action.update"),
+						_ => L10n.Get(Table, "action.download"),
+					};
+			}
+			if (playIcon != null)
+			{
+				// The label needs the icon's room for ダウンロード and the download progress.
+				playIcon.SetActive(playLabel.text == L10n.Get(Table, "action.play"));
+			}
+			upvoteButton.interactable = has;
+			downvoteButton.interactable = has;
+			upvoteLabel.text = (has && chart.MyVote == 1 ? "<color=" + UpvoteColor + ">▲</color> " : "▲ ") + (has ? chart.Score : 0);
+			downvoteLabel.text = has && chart.MyVote == -1 ? "<color=" + DownvoteColor + ">▼</color>" : "▼";
+			previewButton.interactable = has && !string.IsNullOrEmpty(chart.AudioUrl);
+			webPageButton.interactable = has;
+			if (previewLabel != null && _previewCts == null)
+			{
+				previewLabel.text = L10n.Get(Table, "preview.play");
+			}
+			foreach (Button button in new[] { parentButton, bookmarkButton, playButton, upvoteButton, downvoteButton, previewButton, webPageButton })
+			{
+				if (button != null && button.TryGetComponent(out CanvasGroup group))
+				{
+					group.alpha = button.interactable ? 1f : 0.4f;
+				}
+			}
+		}
+
+		/// <summary>The chart may be a separate copy (親譜面, ID search): carry its counters over to the list row.</summary>
+		private void RefreshRowFor(CommunityChart chart)
+		{
+			foreach (Row row in _rows)
+			{
+				if (!string.Equals(row.Chart.Id, chart.Id, StringComparison.Ordinal))
+				{
+					continue;
+				}
+				if (!ReferenceEquals(row.Chart, chart))
+				{
+					row.Chart.Score = chart.Score;
+					row.Chart.Upvotes = chart.Upvotes;
+					row.Chart.Downvotes = chart.Downvotes;
+					row.Chart.MyVote = chart.MyVote;
+					row.Chart.Bookmarked = chart.Bookmarked;
+					row.Chart.DownloadCount = chart.DownloadCount;
+					row.Chart.PlayCount = chart.PlayCount;
+				}
+				FillRow(row);
+			}
+		}
+
+		/* ---------- actions ---------- */
+
+		private bool RequireLogin(string reason, Action retry)
+		{
+			if (CommunityAccount.IsSignedIn)
+			{
+				return true;
+			}
+			loginPanel.Show(reason, retry);
+			return false;
+		}
+
+		/// <summary>▲ / ▼ as on the site: pressing the vote you already gave takes it back.</summary>
+		private async UniTaskVoid VoteAsync(int direction)
+		{
+			CommunityChart chart = _selected;
+			if (chart == null || !RequireLogin(direction > 0 ? L10n.Get(Table, "signIn.forUpvote") : L10n.Get(Table, "signIn.forDownvote"), () => VoteAsync(direction).Forget()))
+			{
+				return;
+			}
+			if (_voting)
+			{
+				return;
+			}
+			_voting = true;
+			int value = chart.MyVote == direction ? 0 : direction;
+			try
+			{
+				CommunityClient.VoteReply reply = await CommunityClient.SetVoteAsync(chart.Id, value, DestroyToken);
+				chart.Score = reply.Score;
+				chart.Upvotes = reply.Upvotes;
+				chart.Downvotes = reply.Downvotes;
+				chart.MyVote = reply.MyVote;
+				RefreshRowFor(chart);
+				if (_selected == chart)
+				{
+					UpdateSelection(chart);
+				}
+			}
+			catch (CommunityException exception)
+			{
+				HandleActionError(exception);
+			}
+			finally
+			{
+				_voting = false;
+			}
+		}
+
+		private async UniTaskVoid ToggleBookmarkAsync()
+		{
+			CommunityChart chart = _selected;
+			if (chart == null || !RequireLogin(L10n.Get(Table, "signIn.forBookmark"), () => ToggleBookmarkAsync().Forget()))
+			{
+				return;
+			}
+			bool saved = chart.Bookmarked != true;
+			try
+			{
+				await CommunityClient.SetBookmarkAsync(chart.Id, saved, DestroyToken);
+				chart.Bookmarked = saved;
+				RefreshRowFor(chart);
+				SetStatus(saved ? L10n.Get(Table, "bookmark.added") : L10n.Get(Table, "bookmark.removed"));
+				UpdateActionButtons();
+			}
+			catch (CommunityException exception)
+			{
+				HandleActionError(exception);
+			}
+		}
+
+		private async UniTaskVoid OpenParentAsync()
+		{
+			CommunityChart chart = _selected;
+			if (string.IsNullOrEmpty(chart?.ParentChartId))
+			{
+				return;
+			}
+			try
+			{
+				CommunityChart parent = await CommunityClient.GetAsync(chart.ParentChartId, DestroyToken);
+				if (parent == null)
+				{
+					SetStatus(L10n.Get(Table, "parent.gone"));
+					return;
+				}
+				UpdateSelection(parent);
+				SetStatus(L10n.Format(Table, "parent.showing", parent.ScoreTitle));
+			}
+			catch (CommunityException exception)
+			{
+				SetStatus(exception.Message);
+			}
+		}
+
+		private async UniTaskVoid DownloadOrPlayAsync()
+		{
+			CommunityChart chart = _selected;
+			if (chart == null || _downloading)
+			{
+				return;
+			}
+			if (CommunityLibrary.GetState(chart) == CommunityInstallState.Installed)
+			{
+				StopPreview();
+				string error = await CustomMusicScorePlayLauncher.PlayAsync(
+					CommunityLibrary.GetEntry(chart), false, MenuScreenType.CommunityCharts, SetStatus, DestroyToken);
+				SetStatus(error ?? L10n.Get(Table, "play.starting"));
+				return;
+			}
+
+			_downloading = true;
+			UpdateActionButtons();
+			try
+			{
+				// Synchronous, so a late report cannot overwrite the label after the download finished.
+				IProgress<float> progress = Cysharp.Threading.Tasks.Progress.Create<float>(p =>
+				{
+					if (_downloading)
+					{
+						playLabel.text = Mathf.RoundToInt(p * 100f) + "%";
+					}
+				});
+				if (playIcon != null)
+				{
+					playIcon.SetActive(false);
+				}
+				SetStatus(L10n.Format(Table, "download.progress", chart.ScoreTitle));
+				await CommunityLibrary.DownloadAsync(chart, progress, DestroyToken);
+				chart.DownloadCount++;
+				SetStatus(L10n.Get(Table, "download.done"));
+			}
+			catch (OperationCanceledException)
+			{
+			}
+			catch (CommunityException exception)
+			{
+				SetStatus(exception.Message);
+			}
+			finally
+			{
+				_downloading = false;
+				RefreshRowFor(chart);
+				if (_selected == chart)
+				{
+					UpdateSelection(chart);
+				}
+				else
+				{
+					UpdateActionButtons();
+				}
+			}
+		}
+
+		private void HandleActionError(CommunityException exception)
+		{
+			if (exception.Code == "AUTH_REQUIRED")
+			{
+				loginPanel.Show(L10n.Get(Table, "error.signInExpired"));
+				return;
+			}
+			SetStatus(exception.Message);
+		}
+
+		private void OnAccountChanged()
+		{
+			if (!CommunityAccount.IsSignedIn && _tab == Tab.MyList)
+			{
+				SelectTab(Tab.Recommended);
+			}
+			else if (_started && _tab != Tab.Search)
+			{
+				// Vote / 登録済み flags depend on who is signed in.
+				Reload();
+			}
+		}
+
+		private void SetStatus(string message)
+		{
+			statusText.text = message ?? string.Empty;
+		}
+
+		/* ---------- audio preview ---------- */
+
+		private void TogglePreview()
+		{
+			if (_previewCts != null)
+			{
+				StopPreview();
+				return;
+			}
+			if (_selected == null || string.IsNullOrEmpty(_selected.AudioUrl))
+			{
+				return;
+			}
+			_previewCts = CancellationTokenSource.CreateLinkedTokenSource(DestroyToken);
+			PlayPreviewAsync(_selected, _previewCts.Token).Forget();
+		}
+
+		private async UniTaskVoid PlayPreviewAsync(CommunityChart chart, CancellationToken ct)
+		{
+			previewLabel.text = L10n.Get("Common", "loading");
+			try
+			{
+				if (_previewClip == null || _previewUrl != chart.AudioUrl)
+				{
+					ReleasePreviewClip();
+					AudioType type = chart.AudioUrl.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) ? AudioType.MPEG
+						: chart.AudioUrl.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? AudioType.WAV
+						: AudioType.OGGVORBIS;
+					using UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(chart.AudioUrl, type);
+					request.timeout = 60;
+					await request.SendWebRequest().WithCancellation(ct);
+					_previewClip = DownloadHandlerAudioClip.GetContent(request);
+					_previewUrl = chart.AudioUrl;
+				}
+				if (_previewClip == null)
+				{
+					throw new CommunityException("PREVIEW_FAILED", L10n.Get(Table, "preview.failed"));
+				}
+				previewSource.clip = _previewClip;
+				previewSource.time = Mathf.Clamp(chart.PreviewStartSec, 0f, Mathf.Max(0f, _previewClip.length - 1f));
+				previewSource.Play();
+				previewLabel.text = L10n.Get(Table, "preview.stop");
+				float until = Time.unscaledTime + PreviewSeconds;
+				while (previewSource.isPlaying && Time.unscaledTime < until)
+				{
+					await UniTask.Yield(PlayerLoopTiming.Update, ct);
+				}
+			}
+			catch (OperationCanceledException)
+			{
+				return;
+			}
+			catch (Exception exception) when (exception is CommunityException || exception is UnityWebRequestException)
+			{
+				SetStatus(L10n.Get(Table, "preview.failed"));
+			}
+			StopPreview();
+		}
+
+		private void StopPreview()
+		{
+			if (_previewCts != null)
+			{
+				_previewCts.Cancel();
+				_previewCts.Dispose();
+				_previewCts = null;
+			}
+			if (previewSource != null)
+			{
+				previewSource.Stop();
+			}
+			if (previewLabel != null)
+			{
+				previewLabel.text = L10n.Get(Table, "preview.play");
+			}
+		}
+
+		private void ReleasePreviewClip()
+		{
+			if (_previewClip != null)
+			{
+				if (previewSource != null && previewSource.clip == _previewClip)
+				{
+					previewSource.clip = null;
+				}
+				Destroy(_previewClip);
+				_previewClip = null;
+				_previewUrl = null;
+			}
+		}
+
+		private sealed class Row
+		{
+			public Row(CustomMusicScoreEntryCell cell, CommunityChart chart, int rank)
+			{
+				Cell = cell;
+				Chart = chart;
+				Rank = rank;
+			}
+
+			public CustomMusicScoreEntryCell Cell { get; }
+
+			public CommunityChart Chart { get; }
+
+			public int Rank { get; }
+		}
+	}
+}

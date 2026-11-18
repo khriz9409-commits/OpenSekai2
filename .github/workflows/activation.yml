@@ -1,0 +1,58 @@
+name: Build Unsigned OpenSekai IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-iOS-${{ hashFiles('ProjectSettings/ProjectVersion.txt', 'ProjectSettings/**', 'Packages/manifest.json', 'Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-iOS-
+
+      - name: Export OpenSekai Xcode Project
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          targetPlatform: iOS
+          buildMethod: OpenSekai.Editor.PlayerBuilds.BuildIOS
+          buildName: OpenSekai
+          buildsPath: build
+
+      - name: Compile Unsigned .app and Package .ipa
+        run: |
+          set -euo pipefail
+          XCODE_PROJ=$(find build/iOS -maxdepth 3 -type d -name "*.xcodeproj" | head -n 1)
+          SCHEME=$(basename "$XCODE_PROJ" .xcodeproj)
+          echo "Building project: $XCODE_PROJ with scheme: $SCHEME"
+
+          xcodebuild -project "$XCODE_PROJ" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build CONFIGURATION_BUILD_DIR="$PWD/build/output"
+
+          mkdir -p Payload
+          cp -r build/output/*.app Payload/
+          zip -qry OpenSekai-Unsigned.ipa Payload
+
+      - name: Upload Unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenSekai-Unsigned-IPA
+          path: OpenSekai-Unsigned.ipa
